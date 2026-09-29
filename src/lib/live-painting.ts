@@ -1,3 +1,7 @@
+// GPU budget: max pixels per full-screen pass, and the frame rate the painting renders at
+const PIXEL_BUDGET = 1.6e6;
+const FRAME_MS = 1000 / 30;
+
 const COMMON = `
 uniform float uTime;
 uniform vec4 uW;        // weights: strata, rosettes, facets, blocks
@@ -173,23 +177,45 @@ in vec2 vUv; out vec4 o;
 uniform sampler2D uSrc;
 void main(){ o = texture(uSrc, vUv); }
 `,
-  "fs-composite": `
+  // static surface, rendered only on resize or when the weave changes:
+  // rgb = paper tone, a = linen weave multiplier applied over paint and paper alike
+  "fs-paper": `
 in vec2 vUv; out vec4 o;
-uniform sampler2D uCanvas; uniform vec2 uTexel, uRes, uLight;
-uniform vec3 uPaper; uniform float uGrain;
-uniform float uSharpen, uRelief, uGloss, uSoften, uEdge, uWeave, uGrainAmt, uMisreg;
-
-// melt individual bristle marks into a field of colour
-vec4 soft(vec2 uv){
-  if (uSoften < 0.01) return texture(uCanvas, uv);
+uniform vec2 uRes; uniform vec3 uPaper; uniform float uWeave;
+void main(){
+  vec2 px = vUv * uRes;
+  vec3 paper = uPaper * (0.95 + 0.06 * fbm3(px * 0.03)) * (0.975 + 0.05 * noise(px * 0.9));
+  float w = 1.0;
+  if (uWeave > 0.01){
+    float wx = 0.5 + 0.5 * sin(px.x * 1.7 + 2.5 * noise(px * vec2(0.015, 0.25)));
+    float wy = 0.5 + 0.5 * sin(px.y * 1.7 + 2.5 * noise(px * vec2(0.25, 0.015)));
+    float over = step(0.5, fract((floor(px.x / 3.7) + floor(px.y / 3.7)) * 0.5));
+    float weave = mix(wx, wy, over) * (0.8 + 0.4 * noise(px * 0.08));
+    w = 1.0 + (weave - 0.5) * 0.2 * uWeave;
+  }
+  o = vec4(paper, w);
+}
+`,
+  // melt individual bristle marks into a field of colour (once per frame, shared by the misregistered plate)
+  "fs-soft": `
+in vec2 vUv; out vec4 o;
+uniform sampler2D uCanvas; uniform vec2 uTexel; uniform float uSoften;
+void main(){
   vec2 r = uTexel * uSoften;
-  vec4 s = texture(uCanvas, uv) * 2.0;
+  vec4 s = texture(uCanvas, vUv) * 2.0;
   for (int i = 0; i < 8; i++){
     float a = float(i) * 0.785398 + 0.39;
-    s += texture(uCanvas, uv + vec2(cos(a), sin(a)) * r);
+    s += texture(uCanvas, vUv + vec2(cos(a), sin(a)) * r);
   }
-  return s / 10.0;
+  o = s / 10.0;
 }
+`,
+  "fs-composite": `
+in vec2 vUv; out vec4 o;
+uniform sampler2D uCanvas, uSoft, uPaperT; uniform vec2 uTexel, uRes, uLight;
+uniform float uGrain;
+uniform float uSharpen, uRelief, uGloss, uSoften, uEdge, uGrainAmt, uMisreg;
+
 // pull coverage towards a clean edge, like cut paper or a flat stencil
 float edgeA(float a){ return mix(a, smoothstep(0.42, 0.58, a), uEdge); }
 vec4 shape(vec4 c){
@@ -201,7 +227,7 @@ vec4 shape(vec4 c){
 void main(){
   vec2 t = uTexel;
   float k = max(1.0, uSoften);
-  vec4 c = soft(vUv);
+  vec4 c = texture(uSoft, vUv);
   vec4 cL = texture(uCanvas, vUv - vec2(t.x * k, 0.0)), cR = texture(uCanvas, vUv + vec2(t.x * k, 0.0));
   vec4 cB = texture(uCanvas, vUv - vec2(0.0, t.y * k)), cT = texture(uCanvas, vUv + vec2(0.0, t.y * k));
   float aL = edgeA(cL.a), aR = edgeA(cR.a), aB = edgeA(cB.a), aT = edgeA(cT.a);
@@ -214,23 +240,18 @@ void main(){
   float diff = dot(n, L) - L.z;
 
   vec2 px = vUv * uRes;
-  vec3 paper = uPaper * (0.95 + 0.06 * fbm3(px * 0.03)) * (0.975 + 0.05 * noise(px * 0.9));
+  vec4 pw = texture(uPaperT, vUv);
+  vec3 paper = pw.rgb;
   vec3 col = paper * (1.0 - c.a) + c.rgb;
 
   // riso-style misregistration: the red plate prints slightly off
   if (uMisreg > 0.01){
-    vec4 c2 = shape(soft(vUv + vec2(t.x, -0.6 * t.y) * uMisreg));
+    vec4 c2 = shape(texture(uSoft, vUv + vec2(t.x, -0.6 * t.y) * uMisreg));
     col.r = (paper * (1.0 - c2.a) + c2.rgb).r;
   }
 
   // linen weave showing through the paint
-  if (uWeave > 0.01){
-    float wx = 0.5 + 0.5 * sin(px.x * 1.7 + 2.5 * noise(px * vec2(0.015, 0.25)));
-    float wy = 0.5 + 0.5 * sin(px.y * 1.7 + 2.5 * noise(px * vec2(0.25, 0.015)));
-    float over = step(0.5, fract((floor(px.x / 3.7) + floor(px.y / 3.7)) * 0.5));
-    float weave = mix(wx, wy, over) * (0.8 + 0.4 * noise(px * 0.08));
-    col *= 1.0 + (weave - 0.5) * 0.2 * uWeave;
-  }
+  col *= pw.a;
 
   col *= 1.0 + clamp(diff, -0.25, 0.25) * 1.1;
 
@@ -351,6 +372,8 @@ export function initLivePainting(
     P.draw = program("vs-draw", "fs-draw");
     P.fade = program("vs-quad", "fs-fade");
     P.copy = program("vs-quad", "fs-copy");
+    P.paper = program("vs-quad", "fs-paper");
+    P.soft = program("vs-quad", "fs-soft");
     P.composite = program("vs-quad", "fs-composite");
   } catch (err) {
     console.error(err);
@@ -442,7 +465,9 @@ export function initLivePainting(
     gl!.deleteFramebuffer(t.fbo);
   }
 
-  const SIDE = 768;
+  // 512² particles; each deposits more pigment so coverage matches the original 768² look
+  const SIDE = 512;
+  const DENSITY = (768 * 768) / (SIDE * SIDE);
   const COUNT = SIDE * SIDE;
   const init = new Float32Array(COUNT * 4);
   for (let k = 0; k < COUNT; k++) {
@@ -460,6 +485,9 @@ export function initLivePainting(
   let pres: ReturnType<typeof pair> | null = null;
   let divT: ReturnType<typeof target> | null = null;
   let paint: ReturnType<typeof pair> | null = null;
+  let paperT: ReturnType<typeof target> | null = null;
+  let softT: ReturnType<typeof target> | null = null;
+  let paperWeave = -1;
 
   function pass(p: any, t: { fbo: WebGLFramebuffer | null; w: number; h: number } | null, setup: () => void) {
     gl!.useProgram(p);
@@ -473,8 +501,10 @@ export function initLivePainting(
   function build() {
     if (disposed || !gl) return;
     const cssPx = canvas.clientWidth * canvas.clientHeight;
-    let dpr = Math.min(window.devicePixelRatio || 1, 2);
-    if (cssPx * dpr * dpr > 4.5e6) dpr = Math.sqrt(4.5e6 / cssPx);
+    // the surface is soft and grainy, so retina resolution buys nothing but GPU time;
+    // text and UI stay crisp because they are HTML above the canvas
+    let dpr = Math.min(window.devicePixelRatio || 1, 1.25);
+    if (cssPx * dpr * dpr > PIXEL_BUDGET) dpr = Math.sqrt(PIXEL_BUDGET / cssPx);
     const cw = Math.max(2, Math.floor(canvas.clientWidth * dpr));
     const ch = Math.max(2, Math.floor(canvas.clientHeight * dpr));
     if (cw === W && ch === H) return;
@@ -492,11 +522,16 @@ export function initLivePainting(
       freeT(pres!.read);
       freeT(pres!.write);
       freeT(divT!);
+      freeT(paperT!);
+      freeT(softT!);
     }
     vel = pair(gw, gh, gl.RGBA16F, gl.HALF_FLOAT, gl.LINEAR);
     pres = pair(gw, gh, gl.RGBA16F, gl.HALF_FLOAT, gl.LINEAR);
     divT = target(gw, gh, gl.RGBA16F, gl.HALF_FLOAT, gl.LINEAR);
     paint = pair(W, H, gl.RGBA16F, gl.HALF_FLOAT, gl.LINEAR);
+    paperT = target(W, H, gl.RGBA16F, gl.HALF_FLOAT, gl.LINEAR);
+    softT = target(W, H, gl.RGBA16F, gl.HALF_FLOAT, gl.LINEAR);
+    paperWeave = -1;
     if (old) {
       pass(P.copy, paint.read, function () {
         tex(P.copy, "uSrc", 0, old.read.tex);
@@ -504,6 +539,15 @@ export function initLivePainting(
       freeT(old.read);
       freeT(old.write);
     }
+  }
+
+  function renderPaper() {
+    paperWeave = texture.weave;
+    pass(P.paper, paperT, function () {
+      f2(P.paper, "uRes", W, H);
+      f3(P.paper, "uPaper", 0.937, 0.91, 0.863);
+      f1(P.paper, "uWeave", texture.weave);
+    });
   }
 
   function onResize() {
@@ -680,7 +724,7 @@ export function initLivePainting(
       tex(P.div, "uVel", 0, vel!.read.tex);
       f2(P.div, "uTexel", gx, gy);
     });
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 12; i++) {
       pass(P.jacobi, pres.write, function () {
         tex(P.jacobi, "uP", 0, pres!.read.tex);
         tex(P.jacobi, "uDiv", 1, divT!.tex);
@@ -720,7 +764,7 @@ export function initLivePainting(
     i1(P.draw, "uSide", SIDE);
     gl!.uniform3fv(loc(P.draw, "uPal[0]"), new Float32Array(([] as number[]).concat(...pal)));
     const warm = 1 + 2.5 * Math.exp(-age / 2.5);
-    f1(P.draw, "uAlpha", 0.035 * warm * dt * 60);
+    f1(P.draw, "uAlpha", 0.035 * DENSITY * warm * dt * 60);
     f1(P.draw, "uPointSize", 0.6 + 1.25 * (W / canvas.clientWidth));
     f1(P.draw, "uSpeckle", texture.speckle);
     gl!.enable(gl!.BLEND);
@@ -732,23 +776,32 @@ export function initLivePainting(
   }
 
   function composite() {
-    if (!paint) return;
+    if (!paint || !softT || !paperT) return;
     const L = lightDir();
+    const dpr = W / canvas.clientWidth;
+    if (paperWeave !== texture.weave) renderPaper();
+    const soften = texture.soften * dpr;
+    if (soften >= 0.01) {
+      pass(P.soft, softT, function () {
+        tex(P.soft, "uCanvas", 0, paint!.read.tex);
+        f2(P.soft, "uTexel", 1 / W, 1 / H);
+        f1(P.soft, "uSoften", soften);
+      });
+    }
     pass(P.composite, null, function () {
       common(P.composite);
       tex(P.composite, "uCanvas", 0, paint!.read.tex);
+      tex(P.composite, "uSoft", 1, soften >= 0.01 ? softT!.tex : paint!.read.tex);
+      tex(P.composite, "uPaperT", 2, paperT!.tex);
       f2(P.composite, "uTexel", 1 / W, 1 / H);
       f2(P.composite, "uRes", W, H);
       f2(P.composite, "uLight", L[0], L[1]);
-      f3(P.composite, "uPaper", 0.937, 0.91, 0.863);
       f1(P.composite, "uGrain", Math.random());
-      const dpr = W / canvas.clientWidth;
       f1(P.composite, "uSharpen", texture.sharpen);
       f1(P.composite, "uRelief", texture.relief);
       f1(P.composite, "uGloss", texture.gloss);
-      f1(P.composite, "uSoften", texture.soften * dpr);
+      f1(P.composite, "uSoften", soften);
       f1(P.composite, "uEdge", texture.edge);
-      f1(P.composite, "uWeave", texture.weave);
       f1(P.composite, "uGrainAmt", texture.grain);
       f1(P.composite, "uMisreg", texture.misreg * dpr);
     });
@@ -757,9 +810,12 @@ export function initLivePainting(
   let last = performance.now();
   function frame(now: number) {
     if (disposed) return;
+    rafId = requestAnimationFrame(frame);
+    // the painting drifts slowly, so 30 fps looks the same as 60 at half the GPU cost
+    if (now - last < FRAME_MS - 4) return;
     const real = Math.min(0.1, (now - last) / 1000);
     last = now;
-    if (real > 0.03) slow++;
+    if (real > (FRAME_MS * 1.5) / 1000) slow++;
     else slow = Math.max(0, slow - 1);
     if (slow > 60 && drawFrac > 0.4) {
       drawFrac -= 0.15;
@@ -773,7 +829,6 @@ export function initLivePainting(
       step(dt);
     }
     composite();
-    rafId = requestAnimationFrame(frame);
   }
   rafId = requestAnimationFrame(frame);
 
@@ -785,5 +840,13 @@ export function initLivePainting(
     window.removeEventListener("pointermove", onPointerMove);
     canvas.removeEventListener("webglcontextlost", onContextLost);
     pauseBtn.removeEventListener("click", onPause);
+    // release GPU memory so navigating away and back doesn't pile up textures
+    for (const t of [state.read, state.write, vel?.read, vel?.write, pres?.read, pres?.write, divT, paint?.read, paint?.write, paperT, softT]) {
+      if (t) freeT(t);
+    }
+    for (const p of Object.values(P)) gl!.deleteProgram(p);
+    gl!.deleteBuffer(qb);
+    gl!.deleteVertexArray(quadVao);
+    gl!.deleteVertexArray(pointVao);
   };
 }
