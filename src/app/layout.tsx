@@ -1,9 +1,16 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Artispace",
-  description: "A social platform for artists to share and curate their work."
+  description:
+    "A portfolio you shape yourself, and a network that connects you with galleries and curators by context, not popularity."
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover"
 };
 
 export default function RootLayout({
@@ -13,32 +20,15 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="min-h-screen bg-neutral-950 text-neutral-50">
-        <div className="flex min-h-screen flex-col">
-          <header className="border-b border-neutral-800">
-            <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
-              <div className="flex items-center gap-2">
-                <div className="h-6 w-6 rounded bg-gradient-to-tr from-sky-500 via-fuchsia-500 to-amber-400" />
-                <span className="text-lg font-semibold tracking-tight">
-                  Artispace
-                </span>
-              </div>
-              <nav className="flex items-center gap-4 text-sm text-neutral-300">
-                <a href="/">Home</a>
-                <a href="/feed">Feed</a>
-                <a href="/dashboard">Dashboard</a>
-              </nav>
-            </div>
-          </header>
-          <main className="flex-1">
-            <div className="mx-auto max-w-5xl px-4 py-6">{children}</div>
-          </main>
-          <footer className="border-t border-neutral-900 py-4 text-center text-xs text-neutral-500">
-            <span>Artispace · a space for artists</span>
-          </footer>
-        </div>
-      </body>
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..700&family=Newsreader:ital,opsz,wght@1,6..72,400&display=swap"
+          rel="stylesheet"
+        />
+      </head>
+      <body>{children}</body>
     </html>
   );
 }
-

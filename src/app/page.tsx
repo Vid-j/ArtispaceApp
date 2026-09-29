@@ -1,66 +1,66 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { initLivePainting, type TextureSettings } from "@/lib/live-painting";
+import Link from "next/link";
+import { TextureLab, loadTexture } from "./texture-lab";
+import { SiteHeader } from "./site-header";
+
+const SHOW_LAB = process.env.NODE_ENV === "development";
+
 export default function HomePage() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fallbackRef = useRef<HTMLDivElement>(null);
+  const pauseRef = useRef<HTMLButtonElement>(null);
+  const [texture, setTexture] = useState<TextureSettings | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const fallback = fallbackRef.current;
+    const pause = pauseRef.current;
+    if (!canvas || !fallback || !pause) return;
+    const t = SHOW_LAB ? loadTexture() : undefined;
+    if (t) setTexture(t);
+    return initLivePainting(canvas, fallback, pause, t);
+  }, []);
+
   return (
-    <div className="space-y-8">
-      <section className="grid gap-8 md:grid-cols-[2fr,3fr] md:items-center">
-        <div className="space-y-4">
-          <p className="inline rounded-full border border-neutral-800 px-3 py-1 text-xs uppercase tracking-wide text-neutral-400">
-            MVP · Artist-first social platform
-          </p>
-          <h1 className="text-4xl font-semibold tracking-tight md:text-5xl">
-            Share your work. Curate your space.
-          </h1>
-          <p className="text-sm text-neutral-300 md:text-base">
-            Artispace is a social, interactive platform for artists to post
-            individual pieces or series, and curate how their profile looks and
-            feels. Think of it as your personal gallery on the web.
-          </p>
-          <div className="flex flex-wrap gap-3">
-            <a
-              href="/dashboard"
-              className="rounded-full bg-neutral-50 px-4 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-200"
-            >
-              Go to dashboard
-            </a>
-            <a
-              href="/feed"
-              className="rounded-full border border-neutral-700 px-4 py-2 text-sm font-medium text-neutral-100 hover:border-neutral-500"
-            >
-              Explore recent work
-            </a>
-          </div>
-        </div>
-        <div className="grid gap-3 rounded-2xl border border-neutral-800 bg-neutral-950/60 p-4 shadow-[0_0_40px_rgba(15,23,42,0.7)] sm:grid-cols-3">
-          <div className="col-span-2 space-y-2 rounded-xl bg-gradient-to-tr from-sky-500/20 via-fuchsia-500/10 to-amber-400/10 p-3">
-            <div className="aspect-[4/3] rounded-lg bg-neutral-900/60" />
-            <p className="text-xs font-medium text-neutral-100">
-              Single post
+    <>
+      <canvas ref={canvasRef} aria-hidden="true" />
+      <div className="scrim" />
+      <div className="page">
+        <SiteHeader />
+        <div />
+        <div className="bottom">
+          <main className="hero">
+            <h1>The digital home for professional artists.</h1>
+            <p className="lede">
+              A portfolio you shape yourself, and a network that connects you
+              with galleries and curators by context, not popularity.
             </p>
-            <p className="text-xs text-neutral-300">
-              Showcase one piece with a focused caption.
+            <div className="actions">
+              <Link className="btn btn-primary" href="/coming-soon#portfolios">
+                Create your portfolio
+              </Link>
+              <Link className="btn btn-secondary" href="/coming-soon#discover">
+                Find artists
+              </Link>
+            </div>
+          </main>
+          <figure className="label">
+            <p className="label-title">Untitled, painting now</p>
+            <p className="label-meta">
+              Pigment carried by a live current and remembered by the surface.
+              It began when you arrived and has never looked like this before.
             </p>
-          </div>
-          <div className="space-y-3">
-            <div className="space-y-1 rounded-xl border border-neutral-800 bg-neutral-950/80 p-3">
-              <div className="flex gap-1">
-                <div className="h-10 flex-1 rounded-md bg-neutral-900/80" />
-                <div className="h-10 flex-1 rounded-md bg-neutral-900/40" />
-              </div>
-              <p className="text-xs font-medium text-neutral-100">
-                Series & galleries
-              </p>
-            </div>
-            <div className="space-y-1 rounded-xl border border-dashed border-neutral-800 bg-neutral-950/60 p-3">
-              <p className="text-xs font-medium text-neutral-100">
-                Curated profile
-              </p>
-              <p className="text-xs text-neutral-300">
-                Pin featured works and arrange your series.
-              </p>
-            </div>
-          </div>
+            <button className="pause" ref={pauseRef} type="button">
+              Pause the painting
+            </button>
+          </figure>
         </div>
-      </section>
-    </div>
+      </div>
+      {texture && <TextureLab texture={texture} />}
+      <div className="fallback" ref={fallbackRef} />
+    </>
   );
 }
-
